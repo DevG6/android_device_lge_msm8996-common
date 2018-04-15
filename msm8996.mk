@@ -148,7 +148,8 @@ PRODUCT_PACKAGES += \
     libdisplayconfig \
     libgenlock \
     liboverlay \
-    libqdMetaData.system
+    libqdMetaData.system \
+    libvulkan
 
 
 # DRM
@@ -330,10 +331,6 @@ PRODUCT_PACKAGES += \
     libtinyxml \
     libxml2
 
-# Treble
-PRODUCT_PACKAGES += \
-    vndk-sp \
-
 # Telephony
 PRODUCT_PACKAGES += \
     telephony-ext
@@ -353,7 +350,6 @@ PRODUCT_PACKAGES += \
 
 # VNDK
 PRODUCT_PACKAGES += \
-    libstdc++.vendor \
     vndk_package
 
 # Wifi
