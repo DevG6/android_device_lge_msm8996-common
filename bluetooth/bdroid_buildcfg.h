@@ -35,6 +35,7 @@ inline const char* BtmGetDefaultName()
 
 	return "";
 }
+#undef PROPERTY_VALUE_MAX
 
 #define BTM_DEF_LOCAL_NAME BtmGetDefaultName()
 #define BTA_DISABLE_DELAY 1000 /* in milliseconds */
