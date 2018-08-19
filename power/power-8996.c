@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016, The Linux Foundation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -26,7 +26,7 @@
  * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
  * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-#define LOG_NDEBUG 1
+#define LOG_NIDEBUG 0
 
 #include <errno.h>
 #include <string.h>
@@ -48,203 +48,184 @@
 #include "hint-data.h"
 #include "performance.h"
 #include "power-common.h"
+#include "powerhintparser.h"
 
-static int display_hint_sent;
-int launch_handle = -1;
-int launch_mode;
+static int sustained_mode_handle = 0;
+static int vr_mode_handle = 0;
+static int launch_handle = 0;
+static int sustained_performance_mode = 0;
+static int vr_mode = 0;
+static int launch_mode = 0;
+#define CHECK_HANDLE(x) (((x)>0) && ((x)!=-1))
 
-#ifdef EXTRA_POWERHAL_HINTS
-static int process_cam_preview_hint(void *metadata)
+int is_perf_hint_active(int hint)
 {
-    char governor[80];
-    struct cam_preview_metadata_t cam_preview_metadata;
-
-    if (get_scaling_governor(governor, sizeof(governor)) == -1) {
-        ALOGE("Can't obtain scaling governor.");
-
-        return HINT_NONE;
+    switch (hint) {
+        case SUSTAINED_PERF_HINT_ID:
+            return sustained_performance_mode != 0;
+        case VR_MODE_HINT_ID:
+            return vr_mode != 0;
+        case VR_MODE_SUSTAINED_PERF_HINT_ID:
+            return vr_mode != 0 && sustained_performance_mode != 0;
     }
-
-    /* Initialize encode metadata struct fields */
-    memset(&cam_preview_metadata, 0, sizeof(struct cam_preview_metadata_t));
-    cam_preview_metadata.state = -1;
-    cam_preview_metadata.hint_id = CAM_PREVIEW_HINT_ID;
-
-    if (metadata) {
-        if (parse_cam_preview_metadata((char *)metadata, &cam_preview_metadata) ==
-            -1) {
-            ALOGE("Error occurred while parsing metadata.");
-            return HINT_NONE;
-        }
-    } else {
-        return HINT_NONE;
-    }
-
-    if (cam_preview_metadata.state == 1) {
-        if ((strncmp(governor, INTERACTIVE_GOVERNOR, strlen(INTERACTIVE_GOVERNOR)) == 0) &&
-                (strlen(governor) == strlen(INTERACTIVE_GOVERNOR))) {
-            /* sched and cpufreq params
-             * above_hispeed_delay for LVT - 40ms
-             * go hispeed load for LVT - 95
-             * hispeed freq for LVT - 556 MHz
-             * target load for LVT - 90
-             * above hispeed delay for sLVT - 40ms
-             * go hispeed load for sLVT - 95
-             * hispeed freq for sLVT - 556 MHz
-             * target load for sLVT - 90
-             * bus DCVS set to V2 config:
-             *  low power ceil mpbs - 2500
-             *  low power io percent - 50
-             */
-            int resource_values[] = {0x41400000, 0x4, 0x41410000, 0x5F, 0x41414000, 0x22C,
-                0x41420000, 0x5A, 0x41400100, 0x4, 0x41410100, 0x5F, 0x41414100, 0x22C,
-                0x41420100, 0x5A, 0x41810000, 0x9C4, 0x41814000, 0x32};
-
-            perform_hint_action(cam_preview_metadata.hint_id,
-                    resource_values, sizeof(resource_values)/sizeof(resource_values[0]));
-            ALOGI("Cam Preview hint start");
-            return HINT_HANDLED;
-        } else if ((strncmp(governor, SCHED_GOVERNOR, strlen(SCHED_GOVERNOR)) == 0) &&
-                (strlen(governor) == strlen(SCHED_GOVERNOR))) {
-            /*
-             * lower bus BW to save power
-             *   0x41810000: low power ceil mpbs = 2500
-             *   0x41814000: low power io percent = 50
-             */
-            int resource_values[] = {0x41810000, 0x9C4, 0x41814000, 0x32};
-
-            perform_hint_action(
-                cam_preview_metadata.hint_id, resource_values,
-                sizeof(resource_values) / sizeof(resource_values[0]));
-            ALOGI("Cam Preview hint start");
-            return HINT_HANDLED;
-        }
-    } else if (cam_preview_metadata.state == 0) {
-        if (((strncmp(governor, INTERACTIVE_GOVERNOR, strlen(INTERACTIVE_GOVERNOR)) == 0) &&
-                (strlen(governor) == strlen(INTERACTIVE_GOVERNOR))) ||
-            ((strncmp(governor, SCHED_GOVERNOR, strlen(SCHED_GOVERNOR)) == 0) &&
-                (strlen(governor) == strlen(SCHED_GOVERNOR)))) {
-            undo_hint_action(cam_preview_metadata.hint_id);
-            ALOGI("Cam Preview hint stop");
-            return HINT_HANDLED;
-        }
-    }
-    return HINT_NONE;
+    return 0;
 }
-#endif
+
+static int process_sustained_perf_hint(void *data)
+{
+    int duration = 0;
+    int *resource_values = NULL;
+    int resources = 0;
+
+    if (data && sustained_performance_mode == 0) {
+        if (vr_mode == 0) { // Sustained mode only.
+            resource_values = getPowerhint(SUSTAINED_PERF_HINT_ID, &resources);
+            if (!resource_values) {
+                ALOGE("Can't get sustained perf hints from xml ");
+                return HINT_NONE;
+            }
+            sustained_mode_handle = interaction_with_handle(
+                sustained_mode_handle, duration, resources, resource_values);
+            if (!CHECK_HANDLE(sustained_mode_handle)) {
+                ALOGE("Failed interaction_with_handle for sustained_mode_handle");
+                return HINT_NONE;
+            }
+        } else if (vr_mode == 1) { // Sustained + VR mode.
+            release_request(vr_mode_handle);
+            resource_values = getPowerhint(VR_MODE_SUSTAINED_PERF_HINT_ID, &resources);
+            if (!resource_values) {
+                ALOGE("Can't get VR mode sustained perf hints from xml ");
+                return HINT_NONE;
+            }
+            sustained_mode_handle = interaction_with_handle(
+                sustained_mode_handle, duration, resources, resource_values);
+            if (!CHECK_HANDLE(sustained_mode_handle)) {
+                ALOGE("Failed interaction_with_handle for sustained_mode_handle");
+                return HINT_NONE;
+            }
+        }
+        sustained_performance_mode = 1;
+    } else if (sustained_performance_mode == 1) {
+        release_request(sustained_mode_handle);
+        if (vr_mode == 1) { // Switch back to VR Mode.
+            resource_values = getPowerhint(VR_MODE_HINT_ID, &resources);
+            if (!resource_values) {
+                ALOGE("Can't get VR mode perf hints from xml ");
+                return HINT_NONE;
+            }
+            vr_mode_handle = interaction_with_handle(
+                vr_mode_handle, duration, resources, resource_values);
+            if (!CHECK_HANDLE(vr_mode_handle)) {
+                ALOGE("Failed interaction_with_handle for vr_mode_handle");
+                return HINT_NONE;
+            }
+        }
+        sustained_performance_mode = 0;
+    }
+    return HINT_HANDLED;
+}
+
+static int process_vr_mode_hint(void *data)
+{
+    int duration = 0;
+    int *resource_values = NULL;
+    int resources = 0;
+
+    if (data && vr_mode == 0) {
+        if (sustained_performance_mode == 0) { // VR mode only.
+            resource_values = getPowerhint(VR_MODE_HINT_ID, &resources);
+            if (!resource_values) {
+                ALOGE("Can't get VR mode perf hints from xml ");
+                return HINT_NONE;
+            }
+            vr_mode_handle = interaction_with_handle(
+                vr_mode_handle, duration, resources, resource_values);
+            if (!CHECK_HANDLE(vr_mode_handle)) {
+                ALOGE("Failed interaction_with_handle for vr_mode_handle");
+                return HINT_NONE;
+            }
+        } else if (sustained_performance_mode == 1) { // Sustained + VR mode.
+            release_request(sustained_mode_handle);
+            resource_values = getPowerhint(VR_MODE_SUSTAINED_PERF_HINT_ID, &resources);
+            if (!resource_values) {
+                ALOGE("Can't get VR mode sustained perf hints from xml ");
+                return HINT_NONE;
+            }
+            vr_mode_handle = interaction_with_handle(
+                vr_mode_handle, duration, resources, resource_values);
+            if (!CHECK_HANDLE(vr_mode_handle)) {
+                ALOGE("Failed interaction_with_handle for vr_mode_handle");
+                return HINT_NONE;
+            }
+        }
+        vr_mode = 1;
+    } else if (vr_mode == 1) {
+        release_request(vr_mode_handle);
+        if (sustained_performance_mode == 1) { // Switch back to sustained Mode.
+            resource_values = getPowerhint(SUSTAINED_PERF_HINT_ID, &resources);
+            if (!resource_values) {
+                ALOGE("Can't get sustained perf hints from xml ");
+                return HINT_NONE;
+            }
+            sustained_mode_handle = interaction_with_handle(
+                sustained_mode_handle, duration, resources, resource_values);
+            if (!CHECK_HANDLE(sustained_mode_handle)) {
+                ALOGE("Failed interaction_with_handle for sustained_mode_handle");
+                return HINT_NONE;
+            }
+        }
+        vr_mode = 0;
+    }
+
+    return HINT_HANDLED;
+}
 
 static int process_boost(int boost_handle, int duration)
 {
-    char governor[80];
-    int eas_launch_resources[] = {0x40804000, 0xFFF, 0x40804100, 0xFFF,
-                                         0x40800000, 0xFFF, 0x40800100, 0xFFF,
-                                         0x41800000, 140,   0x40400000, 0x1};
-    int hmp_launch_resources[] = {0x40C00000, 0x1,   0x40804000, 0xFFF,
-                                         0x40804100, 0xFFF, 0x40800000, 0xFFF,
-                                         0x40800100, 0xFFF, 0x41800000, 140,
-                                         0x40400000, 0x1};
-    int* launch_resources;
-    size_t launch_resources_size;
+    int *resource_values;
+    int resources;
 
-    if (get_scaling_governor(governor, sizeof(governor)) == -1) {
-        ALOGE("Can't obtain scaling governor.");
-        return -1;
+    resource_values = getPowerhint(BOOST_HINT_ID, &resources);
+
+    if (resource_values != NULL) {
+        boost_handle = interaction_with_handle(
+            boost_handle, duration, resources, resource_values);
+        if (!CHECK_HANDLE(boost_handle)) {
+            ALOGE("Failed interaction_with_handle for boost_handle");
+        }
     }
-    if (strncmp(governor, SCHED_GOVERNOR, strlen(SCHED_GOVERNOR)) == 0) {
-        launch_resources = eas_launch_resources;
-        launch_resources_size = sizeof(eas_launch_resources) / sizeof(eas_launch_resources[0]);
-    } else if (strncmp(governor, INTERACTIVE_GOVERNOR,
-                       strlen(INTERACTIVE_GOVERNOR)) == 0) { /*HMP boost*/
-        launch_resources = hmp_launch_resources;
-        launch_resources_size = sizeof(hmp_launch_resources) / sizeof(hmp_launch_resources[0]);
-    } else {
-        ALOGE("Unsupported governor.");
-        return -1;
-    }
-    boost_handle = interaction_with_handle(
-        boost_handle, duration, launch_resources_size, launch_resources);
+
     return boost_handle;
 }
 
-static int process_video_encode_hint(void *metadata)
+static int process_video_encode_hint(void *data)
 {
-    char governor[80];
     static int boost_handle = -1;
 
-    if (get_scaling_governor(governor, sizeof(governor)) == -1) {
-        ALOGE("Can't obtain scaling governor.");
-
-        return HINT_NONE;
-    }
-
-    if (metadata) {
+    if (data) {
+        // TODO: remove the launch boost based on camera launch time
         int duration = 2000; // boosts 2s for starting encoding
         boost_handle = process_boost(boost_handle, duration);
         ALOGD("LAUNCH ENCODER-ON: %d MS", duration);
-        if ((strncmp(governor, INTERACTIVE_GOVERNOR, strlen(INTERACTIVE_GOVERNOR)) == 0) &&
-                (strlen(governor) == strlen(INTERACTIVE_GOVERNOR))) {
-            /* 1. cpufreq params
-             *    -above_hispeed_delay for LVT - 40ms
-             *    -go hispeed load for LVT - 95
-             *    -hispeed freq for LVT - 556 MHz
-             *    -target load for LVT - 90
-             *    -above hispeed delay for sLVT - 40ms
-             *    -go hispeed load for sLVT - 95
-             *    -hispeed freq for sLVT - 806 MHz
-             *    -target load for sLVT - 90
-             * 2. bus DCVS set to V2 config:
-             *    -low power ceil mpbs - 2500
-             *    -low power io percent - 50
-             * 3. hysteresis optimization
-             *    -bus dcvs hysteresis tuning
-             *    -sample_ms of 10 ms
-             *    -disable ignore_hispeed_notif
-             *    -sLVT hispeed freq to 806MHz
-             */
-            int resource_values[] = {
-                0x41810000, 0x9C4, 0x41814000, 0x32, 0x4180C000, 0x0, 0x41820000, 0xA,
-                0x41438100, 0x1,  0x41438000, 0x1 };
-
-            perform_hint_action(DEFAULT_VIDEO_ENCODE_HINT_ID,
-                    resource_values, sizeof(resource_values)/sizeof(resource_values[0]));
-            ALOGD("Video Encode hint start");
-            return HINT_HANDLED;
-        } else if ((strncmp(governor, SCHED_GOVERNOR, strlen(SCHED_GOVERNOR)) == 0) &&
-                (strlen(governor) == strlen(SCHED_GOVERNOR))) {
-
-            /* 1. bus DCVS set to V2 config:
-             *    0x41810000: low power ceil mpbs - 2500
-             *    0x41814000: low power io percent - 50
-             * 2. hysteresis optimization
-             *    0x4180C000: bus dcvs hysteresis tuning
-             *    0x41820000: sample_ms of 10 ms
-             */
-            int resource_values[] = {0x41810000, 0x9C4, 0x41814000, 0x32,
-                                     0x4180C000, 0x0,   0x41820000, 0xA};
-
-            perform_hint_action(DEFAULT_VIDEO_ENCODE_HINT_ID,
-                    resource_values, sizeof(resource_values)/sizeof(resource_values[0]));
-            ALOGD("Video Encode hint start");
-            return HINT_HANDLED;
-        }
+        int *resource_values = NULL;
+        int resources = 0;
+        resource_values = getPowerhint(DEFAULT_VIDEO_ENCODE_HINT_ID, &resources);
+        if (resource_values != NULL)
+            perform_hint_action(DEFAULT_VIDEO_ENCODE_HINT_ID, resource_values, resources);
+        ALOGD("Video Encode hint start");
+        return HINT_HANDLED;
     } else {
-        // boost handle is intentionally not released, release_request(boost_handle);
-        if (((strncmp(governor, INTERACTIVE_GOVERNOR, strlen(INTERACTIVE_GOVERNOR)) == 0) &&
-                (strlen(governor) == strlen(INTERACTIVE_GOVERNOR))) ||
-            ((strncmp(governor, SCHED_GOVERNOR, strlen(SCHED_GOVERNOR)) == 0) &&
-                (strlen(governor) == strlen(SCHED_GOVERNOR)))) {
-            undo_hint_action(DEFAULT_VIDEO_ENCODE_HINT_ID);
-            ALOGD("Video Encode hint stop");
-            return HINT_HANDLED;
-        }
+        undo_hint_action(DEFAULT_VIDEO_ENCODE_HINT_ID);
+        ALOGD("Video Encode hint stop");
+        return HINT_HANDLED;
     }
     return HINT_NONE;
 }
 
 static int process_activity_launch_hint(void *data)
 {
-    // boost will timeout in 5s
-    int duration = 5000;
+    // boost will timeout in 1.25s
+    int duration = 1250;
     ATRACE_BEGIN("launch");
     if (sustained_performance_mode || vr_mode) {
         ATRACE_END();
@@ -252,7 +233,9 @@ static int process_activity_launch_hint(void *data)
     }
 
     ALOGD("LAUNCH HINT: %s", data ? "ON" : "OFF");
-    if (data && launch_mode == 0) {
+    // restart the launch hint if the framework has not yet released
+    // this shouldn't happen, but we've seen bugs where it could
+    if (data) {
         launch_handle = process_boost(launch_handle, duration);
         if (launch_handle > 0) {
             launch_mode = 1;
@@ -265,7 +248,9 @@ static int process_activity_launch_hint(void *data)
             return HINT_NONE;
         }
     } else if (data == NULL  && launch_mode == 1) {
-        release_request(launch_handle);
+        // framework release hints aren't necessarily reliable
+        // always wait the full duration
+        // release_request(launch_handle);
         ATRACE_INT("launch_lock", 0);
         launch_mode = 0;
         ATRACE_END();
@@ -279,13 +264,14 @@ int power_hint_override(power_hint_t hint, void *data)
 {
     int ret_val = HINT_NONE;
     switch(hint) {
-#ifdef EXTRA_POWERHAL_HINTS
-        case POWER_HINT_CAM_PREVIEW:
-            ret_val = process_cam_preview_hint(data);
-            break;
-#endif
         case POWER_HINT_VIDEO_ENCODE:
             ret_val = process_video_encode_hint(data);
+            break;
+        case POWER_HINT_SUSTAINED_PERFORMANCE:
+            ret_val = process_sustained_perf_hint(data);
+            break;
+        case POWER_HINT_VR_MODE:
+            ret_val = process_vr_mode_hint(data);
             break;
         case POWER_HINT_LAUNCH:
             ret_val = process_activity_launch_hint(data);
@@ -296,39 +282,7 @@ int power_hint_override(power_hint_t hint, void *data)
     return ret_val;
 }
 
-int set_interactive_override(int on)
+int set_interactive_override(int UNUSED(on))
 {
     return HINT_HANDLED; /* Don't excecute this code path, not in use */
-    char governor[80];
-
-    if (get_scaling_governor(governor, sizeof(governor)) == -1) {
-        ALOGE("Can't obtain scaling governor.");
-
-        return HINT_NONE;
-    }
-
-    if (!on) {
-        /* Display off */
-        if ((strncmp(governor, INTERACTIVE_GOVERNOR, strlen(INTERACTIVE_GOVERNOR)) == 0) &&
-            (strlen(governor) == strlen(INTERACTIVE_GOVERNOR))) {
-            int resource_values[] = {}; /* dummy node */
-            if (!display_hint_sent) {
-                perform_hint_action(DISPLAY_STATE_HINT_ID,
-                resource_values, sizeof(resource_values)/sizeof(resource_values[0]));
-                display_hint_sent = 1;
-                ALOGV("Display Off hint start");
-                return HINT_HANDLED;
-            }
-        }
-    } else {
-        /* Display on */
-        if ((strncmp(governor, INTERACTIVE_GOVERNOR, strlen(INTERACTIVE_GOVERNOR)) == 0) &&
-            (strlen(governor) == strlen(INTERACTIVE_GOVERNOR))) {
-            undo_hint_action(DISPLAY_STATE_HINT_ID);
-            display_hint_sent = 0;
-            ALOGV("Display Off hint stop");
-            return HINT_HANDLED;
-        }
-    }
-    return HINT_NONE;
 }

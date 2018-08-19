@@ -14,7 +14,6 @@
 
 LOCAL_PATH := $(call my-dir)
 
-ifeq ($(call is-vendor-board-platform,QCOM),true)
 include $(CLEAR_VARS)
 
 LOCAL_MODULE_RELATIVE_PATH := hw
@@ -24,29 +23,36 @@ LOCAL_MODULE_TAGS := optional
 
 LOCAL_MODULE := android.hardware.power@1.1-service.marlin
 LOCAL_INIT_RC := android.hardware.power@1.1-service.marlin.rc
-LOCAL_SRC_FILES := service.cpp Power.cpp power-helper.c metadata-parser.c utils.c list.c hint-data.c
+LOCAL_SRC_FILES := service.cpp \
+    Power.cpp \
+    InteractionHandler.cpp \
+    power-helper.c \
+    metadata-parser.c \
+    utils.c \
+    list.c \
+    hint-data.c \
+    powerhintparser.c
+
+LOCAL_C_INCLUDES := external/libxml2/include \
+                    external/icu/icu4c/source/common
 
 # Include target-specific files.
-ifeq ($(call is-board-platform-in-list, msm8996), true)
 LOCAL_SRC_FILES += power-8996.c
-endif
 
-ifeq ($(TARGET_USES_INTERACTION_BOOST),true)
-    LOCAL_CFLAGS += -DINTERACTION_BOOST
-endif
 
-ifneq ($(TARGET_USES_AOSP),true)
-    LOCAL_CFLAGS += -DEXTRA_POWERHAL_HINTS
-endif
+# Enable interaction boost all the time
+LOCAL_CFLAGS += -DINTERACTION_BOOST -Werror
 
 LOCAL_SHARED_LIBRARIES := \
     libbase \
+    liblog \
     libcutils \
+    libdl \
+    libxml2 \
     libhidlbase \
     libhidltransport \
-    liblog \
+    libhardware \
     libutils \
     android.hardware.power@1.1 \
 
 include $(BUILD_EXECUTABLE)
-endif

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2013,2015-2016, The Linux Foundation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -26,14 +26,14 @@
  * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
  * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-#define LOG_NDEBUG 1
+#define LOG_NIDEBUG 0
 
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
+#include <unistd.h>
 
 #include "utils.h"
 #include "list.h"
@@ -42,17 +42,6 @@
 
 #define LOG_TAG "QCOM PowerHAL"
 #include <utils/Log.h>
-
-#ifndef INTERACTION_BOOST
-#define INTERACTION_BOOST
-#endif
-
-char scaling_gov_path[4][80] ={
-    "sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",
-    "sys/devices/system/cpu/cpu1/cpufreq/scaling_governor",
-    "sys/devices/system/cpu/cpu2/cpufreq/scaling_governor",
-    "sys/devices/system/cpu/cpu3/cpufreq/scaling_governor"
-};
 
 static void *qcopt_handle;
 static int (*perf_lock_acq)(unsigned long handle, int duration,
@@ -185,22 +174,10 @@ int get_scaling_governor(char governor[], int size)
     return 0;
 }
 
-int get_scaling_governor_check_cores(char governor[], int size,int core_num)
-{
-
-    if (sysfs_read(scaling_gov_path[core_num], governor,
-                size) == -1) {
-        // Can't obtain the scaling governor. Return.
-        return -1;
-    }
-
-    // Strip newline at the end.
-    int len = strlen(governor);
-    len--;
-    while (len >= 0 && (governor[len] == '\n' || governor[len] == '\r'))
-        governor[len--] = '\0';
-
-    return 0;
+int is_interactive_governor(char* governor) {
+   if (strncmp(governor, INTERACTIVE_GOVERNOR, (strlen(INTERACTIVE_GOVERNOR)+1)) == 0)
+      return 1;
+   return 0;
 }
 
 void interaction(int duration, int num_args, int opt_list[])
@@ -221,7 +198,7 @@ void interaction(int duration, int num_args, int opt_list[])
 #endif
 }
 
-int interaction_with_handle(int lock_handle, int duration, int num_args, int opt_list[]) 
+int interaction_with_handle(int lock_handle, int duration, int num_args, int opt_list[])
 {
 #ifdef INTERACTION_BOOST
     if (duration < 0 || num_args < 1 || opt_list[0] == 0)
@@ -235,8 +212,9 @@ int interaction_with_handle(int lock_handle, int duration, int num_args, int opt
         }
     }
     return lock_handle;
-#endif
+#else
     return 0;
+#endif
 }
 
 void release_request(int lock_handle) {
@@ -262,7 +240,7 @@ void perform_hint_action(int hint_id, int resource_values[], int num_resources)
                     num_resources);
 
             if (lock_handle == -1) {
-                ALOGE("Failed to acquire lock.");
+                ALOGE("%s: Failed to acquire lock.", __func__);
             } else {
                 /* Add this handle to our internal hint-list. */
                 struct hint_data *new_hint =
