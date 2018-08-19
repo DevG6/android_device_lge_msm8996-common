@@ -41,7 +41,7 @@
 #include "power-common.h"
 
 #define LOG_TAG "QCOM PowerHAL"
-#include <utils/Log.h>
+#include <log/log.h>
 
 static void *qcopt_handle;
 static int (*perf_lock_acq)(unsigned long handle, int duration,

@@ -54,5 +54,8 @@ LOCAL_SHARED_LIBRARIES := \
     libhardware \
     libutils \
     android.hardware.power@1.1 \
+    
+LOCAL_HEADER_LIBRARIES := \
+    libhardware_headers
 
 include $(BUILD_EXECUTABLE)
