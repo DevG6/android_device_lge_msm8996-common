@@ -14,3 +14,4 @@ type sysfs_spi, fs_type, sysfs_type;
 type sysfs_camera, fs_type, sysfs_type;
 #perfd adjustments
 #type perfd_data_file, file_type, data_file_type;
+type persist_battery_file, file_type;
